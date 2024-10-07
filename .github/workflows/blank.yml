@@ -1,0 +1,147 @@
+name: Build
+"on":
+  schedule:
+    - cron: "4 23 * * 0"
+  push:
+    branches:
+      - main
+env:
+  GH_TOKEN: "${{ github.token }}"
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: 0
+      - name: Check and release
+        run: |
+          rm -fr * .git .github
+          gh repo clone openwrt/openwrt -- --branch main
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          cat << 'EOF' > .config
+          CONFIG_TARGET_x86=y
+          CONFIG_TARGET_x86_64=y
+          CONFIG_TARGET_x86_64_DEVICE_generic=y
+          EOF
+          make defconfig
+          cat << 'EOF' >> .config
+          CONFIG_BUSYBOX_CUSTOM=y
+          CONFIG_BUSYBOX_CONFIG_FEATURE_PREFER_IPV4_ADDRESS=y
+          CONFIG_BUSYBOX_CONFIG_FEATURE_WGET_HTTPS=y
+          CONFIG_BUSYBOX_CONFIG_FEATURE_WGET_LONG_OPTIONS=y
+          CONFIG_BUSYBOX_CONFIG_FEATURE_WGET_STATUSBAR=y
+          CONFIG_BUSYBOX_CONFIG_FEATURE_WGET_TIMEOUT=y
+          CONFIG_BUSYBOX_CONFIG_TLS=y
+          CONFIG_BUSYBOX_CONFIG_WGET=y
+          # CONFIG_GRUB_IMAGES is not set
+          CONFIG_HTOP_LMSENSORS=y
+          CONFIG_LIBCURL_COOKIES=y
+          CONFIG_LIBCURL_FILE=y
+          CONFIG_LIBCURL_FTP=y
+          CONFIG_LIBCURL_HTTP=y
+          CONFIG_LIBCURL_MBEDTLS=y
+          CONFIG_LIBCURL_NGHTTP2=y
+          CONFIG_LIBCURL_NO_SMB="!"
+          CONFIG_LIBCURL_PROXY=y
+          CONFIG_LIBCURL_UNIX_SOCKETS=y
+          CONFIG_LUCI_LANG_zh_Hans=y
+          CONFIG_LUCI_SRCDIET=y
+          CONFIG_PACKAGE_bash=y
+          CONFIG_PACKAGE_btop=y
+          CONFIG_PACKAGE_cgi-io=y
+          CONFIG_PACKAGE_curl=y
+          CONFIG_PACKAGE_htop=y
+          CONFIG_PACKAGE_kmod-tun=y
+          CONFIG_PACKAGE_kmod-usb-core=y
+          CONFIG_PACKAGE_kmod-usb-net=y
+          CONFIG_PACKAGE_kmod-usb-net-asix-ax88179=y
+          CONFIG_PACKAGE_libcurl=y
+          CONFIG_PACKAGE_libiwinfo=y
+          CONFIG_PACKAGE_libiwinfo-data=y
+          CONFIG_PACKAGE_liblucihttp=y
+          CONFIG_PACKAGE_liblucihttp-ucode=y
+          CONFIG_PACKAGE_libncurses=y
+          CONFIG_PACKAGE_libnghttp2=y
+          CONFIG_PACKAGE_libreadline=y
+          CONFIG_PACKAGE_libstdcpp=y
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-app-firewall=y
+          CONFIG_PACKAGE_luci-app-opkg=y
+          CONFIG_PACKAGE_luci-base=y
+          CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+          CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
+          CONFIG_PACKAGE_luci-i18n-opkg-zh-cn=y
+          CONFIG_PACKAGE_luci-light=y
+          CONFIG_PACKAGE_luci-mod-admin-full=y
+          CONFIG_PACKAGE_luci-mod-network=y
+          CONFIG_PACKAGE_luci-mod-status=y
+          CONFIG_PACKAGE_luci-mod-system=y
+          CONFIG_PACKAGE_luci-proto-ipv6=y
+          CONFIG_PACKAGE_luci-proto-ppp=y
+          CONFIG_PACKAGE_luci-theme-bootstrap=y
+          CONFIG_PACKAGE_nano=y
+          CONFIG_PACKAGE_rpcd=y
+          CONFIG_PACKAGE_rpcd-mod-file=y
+          CONFIG_PACKAGE_rpcd-mod-iwinfo=y
+          CONFIG_PACKAGE_rpcd-mod-luci=y
+          CONFIG_PACKAGE_rpcd-mod-rrdns=y
+          CONFIG_PACKAGE_rpcd-mod-ucode=y
+          CONFIG_PACKAGE_terminfo=y
+          CONFIG_PACKAGE_ucode-mod-html=y
+          CONFIG_PACKAGE_ucode-mod-math=y
+          CONFIG_PACKAGE_uhttpd=y
+          CONFIG_PACKAGE_uhttpd-mod-ubus=y
+          CONFIG_TARGET_ROOTFS_PARTSIZE=256
+          EOF
+          make defconfig
+          mkdir -p files/etc/config
+          cat << 'EOF' > files/etc/config/network
+          config interface 'loopback'
+                  option device 'lo'
+                  option proto 'static'
+                  option ipaddr '127.0.0.1'
+                  option netmask '255.0.0.0'
+          
+          config globals 'globals'
+                  option ula_prefix 'auto'
+          
+          config device
+                  option name 'br-lan'
+                  option type 'bridge'
+                  list ports 'eth0'
+                  list ports 'eth1'
+          
+          config interface 'lan'
+                  option device 'br-lan'
+                  option proto 'static'
+                  option ipaddr '10.0.0.1'
+                  option netmask '255.255.255.0'
+          
+          config interface 'wan'
+                  option proto 'pppoe'
+                  option ifname 'eth2'
+                  option username ''
+                  option password ''
+          EOF
+          make -j$(($(nproc)+1))
+          cd ..
+          zip -r img-$(date +"%Y-%m-%d").zip ./openwrt/bin/targets/x86/64/
+          rm -rf openwrt
+          mkdir -p .github/workflows
+          wget -qO .github/workflows/blank.yml  https://github.com/${{github.repository}}/raw/main/.github/workflows/blank.yml
+          git config --global init.defaultBranch main
+          git init
+          git add .
+          git config user.name "mainians"
+          git config user.email "61817665+mainians@users.noreply.github.com"
+          git commit -m "img-$(date +"%Y-%m-%d").zip"
+          git remote add origin "https://${{ github.actor}}:${{secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+          git push origin main --force
